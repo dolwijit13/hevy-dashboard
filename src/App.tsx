@@ -121,19 +121,26 @@ export const App: React.FC = () => {
       const result = await triggerHevySync(overrideKey);
       if (result.success) {
         if (result.updated) {
+          let detailsText: string | undefined = undefined;
+          if (result.latestWorkout && result.latestMeasurement) {
+            detailsText = `Workout: ${result.latestWorkout.title} • สัดส่วน: ${result.latestMeasurement.date}${result.latestMeasurement.weightKg ? ` (${result.latestMeasurement.weightKg} kg)` : ''}`;
+          } else if (result.latestWorkout) {
+            detailsText = `ล่าสุด: ${result.latestWorkout.title} (${result.latestWorkout.startTime})`;
+          } else if (result.latestMeasurement) {
+            detailsText = `สัดส่วนล่าสุด: ${result.latestMeasurement.date}${result.latestMeasurement.weightKg ? ` (${result.latestMeasurement.weightKg} kg)` : ''}`;
+          }
+
           setSyncToast({
             type: 'success',
             message: result.message,
-            details: result.latestWorkout
-              ? `ล่าสุด: ${result.latestWorkout.title} (${result.latestWorkout.startTime})`
-              : undefined,
+            details: detailsText,
           });
           // Immediately reload data to refresh analytics
           await loadDefaultData();
         } else {
           setSyncToast({
             type: 'info',
-            message: result.message || 'ข้อมูลเป็นปัจจุบันแล้ว ไม่มี workout ใหม่',
+            message: result.message || 'ข้อมูลเป็นปัจจุบันแล้ว ไม่มีข้อมูลใหม่',
           });
         }
         setShowApiKeyModal(false);

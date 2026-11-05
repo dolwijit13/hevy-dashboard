@@ -10,9 +10,14 @@ export interface SyncResult {
   updated: boolean;
   newWorkoutsCount: number;
   newRowsCount: number;
+  newMeasurementsCount?: number;
   latestWorkout?: {
     title: string;
     startTime: string;
+  };
+  latestMeasurement?: {
+    date: string;
+    weightKg?: number;
   };
   message: string;
   error?: string;
@@ -25,6 +30,8 @@ export interface SyncStatus {
   latestDateInCsv: string | null;
   totalWorkoutsInCsv: number;
   totalSetsInCsv: number;
+  totalMeasurementsInDb?: number;
+  latestMeasurementDate?: string | null;
 }
 
 export function formatHevyDate(isoStr: string | Date): string {
@@ -36,6 +43,27 @@ export function formatHevyDate(isoStr: string | Date): string {
   const hh = String(d.getHours()).padStart(2, '0');
   const mm = String(d.getMinutes()).padStart(2, '0');
   return `${day} ${month} ${year}, ${hh}:${mm}`;
+}
+
+export function formatDateToYYYYMMDD(d: Date): string {
+  if (isNaN(d.getTime())) return '';
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function formatMeasurementCsvDate(dateStr: string): string {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3) {
+    const year = parts[0];
+    const monthIdx = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    const month = MONTHS[monthIdx] || parts[1];
+    return `${day} ${month} ${year}, 00:00`;
+  }
+  return dateStr;
 }
 
 export function parseFlexibleDate(dateStr: string): Date {
@@ -145,15 +173,19 @@ export async function getSyncStatus(csvDir = 'raw'): Promise<SyncStatus> {
   // 1. Try Supabase first
   if (supabase) {
     try {
-      const [wCountRes, sCountRes, latestRes] = await Promise.all([
+      const [wCountRes, sCountRes, latestRes, mCountRes, mLatestRes] = await Promise.all([
         supabase.from('workouts').select('*', { count: 'exact', head: true }),
         supabase.from('workout_sets').select('*', { count: 'exact', head: true }),
         supabase.from('workouts').select('start_time').order('start_time', { ascending: false }).limit(1),
+        supabase.from('body_measurements').select('*', { count: 'exact', head: true }),
+        supabase.from('body_measurements').select('date').order('date', { ascending: false }).limit(1),
       ]);
 
       const latestDateStr = latestRes.data?.[0]?.start_time
         ? formatHevyDate(latestRes.data[0].start_time)
         : null;
+
+      const latestMeasurementDate = mLatestRes.data?.[0]?.date || null;
 
       return {
         configured: Boolean(apiKey),
@@ -161,6 +193,8 @@ export async function getSyncStatus(csvDir = 'raw'): Promise<SyncStatus> {
         latestDateInCsv: latestDateStr,
         totalWorkoutsInCsv: wCountRes.count || 0,
         totalSetsInCsv: sCountRes.count || 0,
+        totalMeasurementsInDb: mCountRes.count || 0,
+        latestMeasurementDate,
       };
     } catch (err) {
       console.warn('Failed to query Supabase status, falling back to CSV:', err);
@@ -212,7 +246,7 @@ export async function getSyncStatus(csvDir = 'raw'): Promise<SyncStatus> {
   };
 }
 
-export async function syncHevyWorkouts(options?: {
+export async function syncWorkoutsOnly(options?: {
   overrideApiKey?: string;
   csvDir?: string;
 }): Promise<SyncResult> {
@@ -521,3 +555,373 @@ export async function syncHevyWorkouts(options?: {
     message: `ซิงค์สำเร็จ! เพิ่ม ${newWorkouts.length} workout ใหม่ (${generatedCsvRows.length} เซ็ต)`,
   };
 }
+
+export interface MeasurementSyncResult {
+  success: boolean;
+  updated: boolean;
+  newMeasurementsCount: number;
+  latestMeasurement?: {
+    date: string;
+    weightKg?: number;
+  };
+  message: string;
+  error?: string;
+  details?: any;
+}
+
+export async function syncMeasurementsOnly(options?: {
+  overrideApiKey?: string;
+  csvDir?: string;
+}): Promise<MeasurementSyncResult> {
+  const csvDir = options?.csvDir || 'raw';
+  const apiKey = getHevyApiKey(options?.overrideApiKey);
+
+  if (!apiKey) {
+    return {
+      success: false,
+      updated: false,
+      newMeasurementsCount: 0,
+      message: 'ไม่พบ HEVY_API_KEY กรุณาระบุใน Environment Variables ของ Vercel หรือ .env.local',
+      error: 'NO_API_KEY',
+    };
+  }
+
+  const supabase = getSupabaseServerClient();
+  let latestDateInDb = '';
+  let latestDbRow: any = null;
+
+  // 1. Check Supabase first for latest measurement date
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('body_measurements')
+        .select('*')
+        .order('date', { ascending: false })
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        latestDbRow = data[0];
+        latestDateInDb = data[0].date || '';
+      }
+    } catch (err) {
+      console.warn('Could not query latest measurement from Supabase:', err);
+    }
+  }
+
+  // 2. Also check local measurement_data.csv if present
+  const csvPath = path.resolve(process.cwd(), csvDir, 'measurement_data.csv');
+  let existingCsvRows: any[] = [];
+
+  if (fs.existsSync(csvPath)) {
+    try {
+      const content = fs.readFileSync(csvPath, 'utf8');
+      const parsed = Papa.parse<any>(content, { header: true, skipEmptyLines: true });
+      existingCsvRows = parsed.data || [];
+      for (const row of existingCsvRows) {
+        if (row.date) {
+          const d = parseFlexibleDate(row.date);
+          const ymd = formatDateToYYYYMMDD(d);
+          if (!latestDateInDb || ymd > latestDateInDb) {
+            latestDateInDb = ymd;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 3. Fetch from Hevy API paginated (Hevy pageSize limit is 10)
+  const gatheredMeasurements: any[] = [];
+  let page = 1;
+  const pageSize = 10;
+  const maxPages = latestDateInDb ? 5 : 10;
+  let reachedOlder = false;
+
+  while (!reachedOlder && page <= maxPages) {
+    let res: Response;
+    try {
+      res = await fetch(`https://api.hevyapp.com/v1/body_measurements?page=${page}&pageSize=${pageSize}`, {
+        headers: {
+          'api-key': apiKey,
+          Accept: 'application/json',
+        },
+      });
+    } catch (netErr: any) {
+      return {
+        success: false,
+        updated: false,
+        newMeasurementsCount: 0,
+        message: `เชื่อมต่อ Hevy API Body Measurements ไม่สำเร็จ: ${netErr.message}`,
+        error: 'NETWORK_ERROR',
+      };
+    }
+
+    if (res.status === 401 || res.status === 403) {
+      return {
+        success: false,
+        updated: false,
+        newMeasurementsCount: 0,
+        message: 'HEVY_API_KEY ไม่ถูกต้อง หรือไม่มีสิทธิ์เข้าถึง (ต้องใช้ Hevy Pro)',
+        error: 'UNAUTHORIZED',
+      };
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      return {
+        success: false,
+        updated: false,
+        newMeasurementsCount: 0,
+        message: `Hevy API แจ้มข้อผิดพลาด Body Measurements (${res.status}): ${errText}`,
+        error: `HTTP_${res.status}`,
+      };
+    }
+
+    const data = await res.json();
+    const items = data.body_measurements || [];
+    if (items.length === 0) break;
+
+    for (const m of items) {
+      if (!m.date) continue;
+      const dateYmd = m.date.trim();
+
+      // If strictly older than our latest known date in DB/CSV, we can stop
+      if (latestDateInDb && dateYmd < latestDateInDb) {
+        reachedOlder = true;
+        break;
+      }
+
+      gatheredMeasurements.push(m);
+    }
+
+    if (reachedOlder || page >= (data.page_count || 1)) {
+      break;
+    }
+    page++;
+  }
+
+  if (gatheredMeasurements.length === 0) {
+    return {
+      success: true,
+      updated: false,
+      newMeasurementsCount: 0,
+      message: 'ข้อมูลสัดส่วนร่างกายเป็นปัจจุบันแล้ว',
+    };
+  }
+
+  const num = (v: any) =>
+    v !== null && v !== undefined && !isNaN(Number(v)) ? Number(v) : null;
+
+  const measurementsToUpsert = gatheredMeasurements.map((m) => ({
+    date: m.date.trim(),
+    weight_kg: num(m.weight_kg ?? m.weight),
+    fat_percent: num(m.fat_percent ?? m.body_fat_percentage),
+    neck_cm: num(m.neck_cm ?? m.neck),
+    shoulder_cm: num(m.shoulder_cm ?? m.shoulder ?? m.shoulders),
+    chest_cm: num(m.chest_cm ?? m.chest),
+    left_bicep_cm: num(m.left_bicep_cm ?? m.left_bicep),
+    right_bicep_cm: num(m.right_bicep_cm ?? m.right_bicep),
+    left_forearm_cm: num(m.left_forearm_cm ?? m.left_forearm),
+    right_forearm_cm: num(m.right_forearm_cm ?? m.right_forearm),
+    abdomen_cm: num(m.abdomen_cm ?? m.abdomen),
+    waist_cm: num(m.waist_cm ?? m.waist),
+    hips_cm: num(m.hips_cm ?? m.hips),
+    left_thigh_cm: num(m.left_thigh_cm ?? m.left_thigh),
+    right_thigh_cm: num(m.right_thigh_cm ?? m.right_thigh),
+    left_calf_cm: num(m.left_calf_cm ?? m.left_calf),
+    right_calf_cm: num(m.right_calf_cm ?? m.right_calf),
+    created_at: m.created_at || new Date().toISOString(),
+  }));
+
+  // Detect whether there is actually any new date or changed value
+  let isActuallyUpdated = false;
+  let newDatesCount = 0;
+
+  for (const m of measurementsToUpsert) {
+    if (!latestDateInDb || m.date > latestDateInDb) {
+      isActuallyUpdated = true;
+      newDatesCount++;
+    } else if (m.date === latestDateInDb && latestDbRow) {
+      const weightDiff = Math.abs((m.weight_kg ?? 0) - (Number(latestDbRow.weight_kg) || 0));
+      const waistDiff = Math.abs((m.waist_cm ?? 0) - (Number(latestDbRow.waist_cm) || 0));
+      const shoulderDiff = Math.abs((m.shoulder_cm ?? 0) - (Number(latestDbRow.shoulder_cm) || 0));
+      const chestDiff = Math.abs((m.chest_cm ?? 0) - (Number(latestDbRow.chest_cm) || 0));
+      if (weightDiff > 0.05 || waistDiff > 0.1 || shoulderDiff > 0.1 || chestDiff > 0.1) {
+        isActuallyUpdated = true;
+      }
+    }
+  }
+
+  // 4. Upsert into Supabase
+  if (supabase && measurementsToUpsert.length > 0) {
+    try {
+      const { error: mErr } = await supabase
+        .from('body_measurements')
+        .upsert(measurementsToUpsert, { onConflict: 'date' });
+      if (mErr) {
+        console.error('Supabase body_measurements upsert error:', mErr);
+      }
+    } catch (dbErr) {
+      console.error('Failed to upsert measurements to Supabase:', dbErr);
+    }
+  }
+
+  // 5. Update local CSV if writable
+  try {
+    const csvRowMap = new Map<string, any>();
+    for (const r of existingCsvRows) {
+      if (r.date) {
+        const d = parseFlexibleDate(r.date);
+        const ymd = formatDateToYYYYMMDD(d);
+        csvRowMap.set(ymd, r);
+      }
+    }
+
+    for (const m of measurementsToUpsert) {
+      const csvDateFormatted = formatMeasurementCsvDate(m.date);
+      csvRowMap.set(m.date, {
+        date: csvDateFormatted,
+        weight_kg: m.weight_kg ?? '',
+        fat_percent: m.fat_percent ?? '',
+        neck_cm: m.neck_cm ?? '',
+        shoulder_cm: m.shoulder_cm ?? '',
+        chest_cm: m.chest_cm ?? '',
+        left_bicep_cm: m.left_bicep_cm ?? '',
+        right_bicep_cm: m.right_bicep_cm ?? '',
+        left_forearm_cm: m.left_forearm_cm ?? '',
+        right_forearm_cm: m.right_forearm_cm ?? '',
+        abdomen_cm: m.abdomen_cm ?? '',
+        waist_cm: m.waist_cm ?? '',
+        hips_cm: m.hips_cm ?? '',
+        left_thigh_cm: m.left_thigh_cm ?? '',
+        right_thigh_cm: m.right_thigh_cm ?? '',
+        left_calf_cm: m.left_calf_cm ?? '',
+        right_calf_cm: m.right_calf_cm ?? '',
+      });
+    }
+
+    const sortedEntries = Array.from(csvRowMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    const updatedData = sortedEntries.map((e) => e[1]);
+
+    const updatedCsv = Papa.unparse(
+      {
+        fields: [
+          'date',
+          'weight_kg',
+          'fat_percent',
+          'neck_cm',
+          'shoulder_cm',
+          'chest_cm',
+          'left_bicep_cm',
+          'right_bicep_cm',
+          'left_forearm_cm',
+          'right_forearm_cm',
+          'abdomen_cm',
+          'waist_cm',
+          'hips_cm',
+          'left_thigh_cm',
+          'right_thigh_cm',
+          'left_calf_cm',
+          'right_calf_cm',
+        ],
+        data: updatedData,
+      },
+      {
+        quotes: (_v, colIdx) => colIdx === 0,
+        newline: '\r\n',
+      }
+    );
+
+    fs.mkdirSync(path.dirname(csvPath), { recursive: true });
+    fs.writeFileSync(csvPath, updatedCsv, 'utf8');
+
+    const distCsvPath = path.resolve(process.cwd(), 'dist', csvDir, 'measurement_data.csv');
+    if (fs.existsSync(path.dirname(distCsvPath))) {
+      fs.writeFileSync(distCsvPath, updatedCsv, 'utf8');
+    }
+  } catch (fsErr) {
+    // Read-only filesystem on Vercel
+  }
+
+  const latest = measurementsToUpsert[0];
+
+  return {
+    success: true,
+    updated: isActuallyUpdated,
+    newMeasurementsCount: newDatesCount > 0 ? newDatesCount : (isActuallyUpdated ? 1 : 0),
+    latestMeasurement: {
+      date: latest.date,
+      weightKg: latest.weight_kg ?? undefined,
+    },
+    message: isActuallyUpdated
+      ? `ซิงค์สัดส่วนสำเร็จ! ${newDatesCount > 0 ? `พบข้อมูลใหม่ ${newDatesCount} วัน` : 'อัปเดตข้อมูลล่าสุดเรียบร้อย'}`
+      : 'ข้อมูลสัดส่วนร่างกายเป็นปัจจุบันแล้ว',
+  };
+}
+
+export async function syncHevyAll(options?: {
+  overrideApiKey?: string;
+  csvDir?: string;
+}): Promise<SyncResult> {
+  const [workoutRes, measurementRes] = await Promise.all([
+    syncWorkoutsOnly(options),
+    syncMeasurementsOnly(options),
+  ]);
+
+  if (workoutRes.error === 'NO_API_KEY' || measurementRes.error === 'NO_API_KEY') {
+    return {
+      success: false,
+      updated: false,
+      newWorkoutsCount: 0,
+      newRowsCount: 0,
+      newMeasurementsCount: 0,
+      message: 'ไม่พบ HEVY_API_KEY กรุณาระบุใน Environment Variables ของ Vercel หรือ .env.local',
+      error: 'NO_API_KEY',
+    };
+  }
+
+  if (workoutRes.error === 'UNAUTHORIZED' || measurementRes.error === 'UNAUTHORIZED') {
+    return {
+      success: false,
+      updated: false,
+      newWorkoutsCount: 0,
+      newRowsCount: 0,
+      newMeasurementsCount: 0,
+      message: 'HEVY_API_KEY ไม่ถูกต้อง หรือไม่มีสิทธิ์เข้าถึง (ต้องใช้ Hevy Pro)',
+      error: 'UNAUTHORIZED',
+    };
+  }
+
+  const updated = workoutRes.updated || measurementRes.updated;
+  const newWorkoutsCount = workoutRes.newWorkoutsCount || 0;
+  const newRowsCount = workoutRes.newRowsCount || 0;
+  const newMeasurementsCount = measurementRes.newMeasurementsCount || 0;
+
+  let message = 'ข้อมูลเป็นปัจจุบันแล้ว ไม่มี workout หรือสัดส่วนใหม่ที่ต้องอัปเดต';
+  if (newWorkoutsCount > 0 && newMeasurementsCount > 0) {
+    message = `ซิงค์สำเร็จ! เพิ่ม ${newWorkoutsCount} workout (${newRowsCount} เซ็ต) และข้อมูลสัดส่วน ${newMeasurementsCount} วันล่าสุด`;
+  } else if (newWorkoutsCount > 0) {
+    message = `ซิงค์สำเร็จ! เพิ่ม ${newWorkoutsCount} workout ใหม่ (${newRowsCount} เซ็ต)`;
+  } else if (newMeasurementsCount > 0) {
+    const weightInfo = measurementRes.latestMeasurement?.weightKg
+      ? ` (น้ำหนักล่าสุด ${measurementRes.latestMeasurement.weightKg} kg)`
+      : '';
+    message = `ซิงค์สำเร็จ! อัปเดตข้อมูลสัดส่วนร่างกาย ${newMeasurementsCount} วันล่าสุด${weightInfo}`;
+  }
+
+  return {
+    success: workoutRes.success || measurementRes.success,
+    updated,
+    newWorkoutsCount,
+    newRowsCount,
+    newMeasurementsCount,
+    latestWorkout: workoutRes.latestWorkout,
+    latestMeasurement: measurementRes.latestMeasurement,
+    message,
+    details: {
+      workout: workoutRes,
+      measurement: measurementRes,
+    },
+  };
+}
+
+export const syncHevyWorkouts = syncHevyAll;

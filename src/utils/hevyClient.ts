@@ -3,9 +3,14 @@ export interface SyncResult {
   updated: boolean;
   newWorkoutsCount: number;
   newRowsCount: number;
+  newMeasurementsCount?: number;
   latestWorkout?: {
     title: string;
     startTime: string;
+  };
+  latestMeasurement?: {
+    date: string;
+    weightKg?: number;
   };
   message: string;
   error?: string;
@@ -17,6 +22,8 @@ export interface SyncStatus {
   latestDateInCsv: string | null;
   totalWorkoutsInCsv: number;
   totalSetsInCsv: number;
+  totalMeasurementsInDb?: number;
+  latestMeasurementDate?: string | null;
 }
 
 export async function fetchSyncStatus(): Promise<SyncStatus> {

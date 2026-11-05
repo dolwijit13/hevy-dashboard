@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { syncHevyWorkouts, getSyncStatus } from '../src/server/hevySync.ts';
+import { syncHevyAll, getSyncStatus } from '../src/server/hevySync.ts';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -29,7 +29,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         body = {};
       }
 
-      const result = await syncHevyWorkouts({
+      const result = await syncHevyAll({
         overrideApiKey: body.apiKey,
       });
       return res.status(result.success ? 200 : 400).json(result);

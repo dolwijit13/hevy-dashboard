@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import fs from 'fs';
 import path from 'path';
-import { syncHevyWorkouts, getSyncStatus } from './src/server/hevySync.ts';
+import { syncHevyAll, getSyncStatus } from './src/server/hevySync.ts';
 
 function setupApiMiddlewares(server: any) {
   server.middlewares.use(async (req: any, res: any, next: any) => {
@@ -50,7 +50,7 @@ function setupApiMiddlewares(server: any) {
               // ignore invalid json body
             }
           }
-          const result = await syncHevyWorkouts({
+          const result = await syncHevyAll({
             overrideApiKey: body.apiKey,
           });
           res.setHeader('Content-Type', 'application/json');
