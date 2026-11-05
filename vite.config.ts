@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import fs from 'fs';
@@ -70,33 +70,55 @@ function setupApiMiddlewares(server: any) {
 }
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [
-    tailwindcss(),
-    react(),
-    {
-      name: 'hevy-sync-and-raw-csv',
-      configureServer(server) {
-        setupApiMiddlewares(server);
-      },
-      configurePreviewServer(server) {
-        setupApiMiddlewares(server);
-      },
-      closeBundle() {
-        // Copy raw directory to dist/raw for production preview/serving
-        const srcDir = path.resolve(import.meta.dirname, 'raw');
-        const destDir = path.resolve(import.meta.dirname, 'dist', 'raw');
-        if (fs.existsSync(srcDir)) {
-          fs.mkdirSync(destDir, { recursive: true });
-          fs.readdirSync(srcDir).forEach((file) => {
-            fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
-          });
-        }
-      },
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+
+  const supabaseUrl =
+    env.VITE_SUPABASE_URL ||
+    env.VITE_SUPABASE_PROJECT_URL ||
+    env.SUPABASE_PROJECT_URL ||
+    '';
+
+  const supabaseAnonKey =
+    env.VITE_SUPABASE_ANON_KEY ||
+    env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    env.SUPABASE_PUBLISHABLE_KEY ||
+    '';
+
+  return {
+    define: {
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+      'import.meta.env.VITE_SUPABASE_PROJECT_URL': JSON.stringify(supabaseUrl),
+      'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': JSON.stringify(supabaseAnonKey),
     },
-  ],
-  server: {
-    port: 5173,
-    open: false,
-  },
+    plugins: [
+      tailwindcss(),
+      react(),
+      {
+        name: 'hevy-sync-and-raw-csv',
+        configureServer(server) {
+          setupApiMiddlewares(server);
+        },
+        configurePreviewServer(server) {
+          setupApiMiddlewares(server);
+        },
+        closeBundle() {
+          // Copy raw directory to dist/raw for production preview/serving if exists
+          const srcDir = path.resolve(import.meta.dirname, 'raw');
+          const destDir = path.resolve(import.meta.dirname, 'dist', 'raw');
+          if (fs.existsSync(srcDir)) {
+            fs.mkdirSync(destDir, { recursive: true });
+            fs.readdirSync(srcDir).forEach((file) => {
+              fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+            });
+          }
+        },
+      },
+    ],
+    server: {
+      port: 5173,
+      open: false,
+    },
+  };
 });

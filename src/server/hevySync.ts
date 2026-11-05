@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
+import { Client } from 'pg';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -110,6 +111,96 @@ export function getHevyApiKey(overrideKey?: string): string | null {
   }
 
   return null;
+}
+
+export function getPostgresConnString(): string | null {
+  if (process.env.SUPABASE_POSTGRES_CONNECTION_STRING && process.env.SUPABASE_POSTGRES_CONNECTION_STRING.trim()) {
+    return process.env.SUPABASE_POSTGRES_CONNECTION_STRING.trim();
+  }
+  const envPath = path.resolve(process.cwd(), '.env.local');
+  if (fs.existsSync(envPath)) {
+    const content = fs.readFileSync(envPath, 'utf8');
+    const match = content.match(/^SUPABASE_POSTGRES_CONNECTION_STRING\s*=\s*(.*)$/m);
+    if (match && match[1]) {
+      const k = match[1].trim().replace(/^["']|["']$/g, '');
+      if (k) return k;
+    }
+  }
+  return null;
+}
+
+export async function upsertWorkoutsToSupabase(newWorkouts: any[]): Promise<void> {
+  const connStr = getPostgresConnString();
+  if (!connStr) return;
+
+  const client = new Client({ connectionString: connStr, ssl: { rejectUnauthorized: false } });
+  await client.connect();
+
+  try {
+    for (const w of newWorkouts) {
+      const startTime = new Date(w.start_time);
+      const endTime = w.end_time ? new Date(w.end_time) : startTime;
+      const workoutId = `w_${startTime.getTime()}_${(w.title || 'Workout').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20)}`;
+
+      await client.query(
+        `
+        INSERT INTO workouts (id, title, start_time, end_time, description)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (id) DO UPDATE SET
+          title = EXCLUDED.title,
+          start_time = EXCLUDED.start_time,
+          end_time = EXCLUDED.end_time,
+          description = EXCLUDED.description;
+      `,
+        [workoutId, w.title || 'Workout', startTime.toISOString(), endTime.toISOString(), w.description || '']
+      );
+
+      let setIdx = 0;
+      for (const ex of (w.exercises || [])) {
+        for (const s of (ex.sets || [])) {
+          const setId = `set_${workoutId}_${setIdx++}`;
+          const distKm =
+            s.distance_meters !== null && s.distance_meters !== undefined
+              ? Number((s.distance_meters / 1000).toFixed(3))
+              : null;
+
+          await client.query(
+            `
+            INSERT INTO workout_sets (
+              id, workout_id, exercise_title, superset_id, exercise_notes,
+              set_index, set_type, weight_kg, reps, distance_km, duration_seconds, rpe, start_time
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (id) DO UPDATE SET
+              exercise_title = EXCLUDED.exercise_title,
+              weight_kg = EXCLUDED.weight_kg,
+              reps = EXCLUDED.reps,
+              set_type = EXCLUDED.set_type;
+          `,
+            [
+              setId,
+              workoutId,
+              ex.title || '',
+              ex.superset_id ?? null,
+              ex.notes || '',
+              s.index ?? 0,
+              (s.type || 'normal').toLowerCase(),
+              s.weight_kg ?? null,
+              s.reps ?? null,
+              distKm,
+              s.duration_seconds ?? null,
+              s.rpe ?? null,
+              startTime.toISOString(),
+            ]
+          );
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Failed to upsert to Supabase in hevySync:', err);
+  } finally {
+    await client.end();
+  }
 }
 
 export function getSyncStatus(csvDir = 'raw'): SyncStatus {
@@ -352,6 +443,13 @@ export async function syncHevyWorkouts(options?: {
       newline: '\r\n',
     }
   );
+
+  // Also upsert directly to Supabase if configured
+  try {
+    await upsertWorkoutsToSupabase(newWorkouts);
+  } catch (dbErr) {
+    console.warn('Failed to upsert to Supabase during sync:', dbErr);
+  }
 
   // Backup existing file if present
   if (fs.existsSync(csvPath)) {

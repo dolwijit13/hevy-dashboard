@@ -1,0 +1,18 @@
+{
+  "name": "Hevy Analytics Pro",
+  "short_name": "Hevy Pro",
+  "description": "Fitness Analytics & Body Recomposition Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#09090b",
+  "theme_color": "#09090b",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
+
