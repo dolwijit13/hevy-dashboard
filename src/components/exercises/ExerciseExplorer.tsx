@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { WorkoutSet, PersonalRecord } from '../../types/fitness';
 import { getExerciseProgression } from '../../utils/workoutAnalytics';
 import { getExerciseMetadata } from '../../config/exerciseMuscleMap';
@@ -30,6 +30,15 @@ export const ExerciseExplorer: React.FC<ExerciseExplorerProps> = ({
   onSelectExercise,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
+  const detailSectionRef = useRef<HTMLDivElement>(null);
+
+  const handleSelectExercise = (name: string) => {
+    onSelectExercise(name);
+    // Smooth scroll down to details section, especially on mobile/tablet viewports
+    setTimeout(() => {
+      detailSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 40);
+  };
 
   const exerciseList = useMemo(() => {
     const countMap = new Map<string, number>();
@@ -112,7 +121,7 @@ export const ExerciseExplorer: React.FC<ExerciseExplorerProps> = ({
               return (
                 <div
                   key={e.name}
-                  onClick={() => onSelectExercise(e.name)}
+                  onClick={() => handleSelectExercise(e.name)}
                   className={`p-2.5 rounded-xl border cursor-pointer transition-all flex items-center justify-between text-xs select-none ${
                     isSelected
                       ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300 font-semibold shadow-glow-emerald'
@@ -139,11 +148,16 @@ export const ExerciseExplorer: React.FC<ExerciseExplorerProps> = ({
               );
             })}
           </div>
+
+          <div className="mt-2.5 pt-2 border-t border-white/5 flex items-center justify-between text-[10px] text-zinc-500 font-mono lg:hidden">
+            <span>แตะท่าเพื่อเลื่อนดูกราฟด้านล่าง</span>
+            <span>↓</span>
+          </div>
         </div>
       </div>
 
       {/* Main Panel: Exercise Stats, Progression Chart, and PR Breakdowns */}
-      <div className="lg:col-span-8 space-y-6">
+      <div ref={detailSectionRef} className="lg:col-span-8 space-y-6 scroll-mt-20">
         {/* Exercise Header & Bento Cards */}
         <div className="rounded-2xl bg-[#141418] border border-white/10 p-5 backdrop-blur-md">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/5">

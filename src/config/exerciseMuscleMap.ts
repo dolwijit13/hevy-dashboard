@@ -53,6 +53,8 @@ export const EXERCISE_METADATA: Record<string, ExerciseMeta> = {
   "Back Extension (Weighted Hyperextension)": { muscleGroup: "Back", secondaryMuscleGroup: "Glutes", movementType: "Pull" },
   "Shrug (Machine)": { muscleGroup: "Back", movementType: "Pull" },
   "Ring Row": { muscleGroup: "Back", secondaryMuscleGroup: "Biceps", movementType: "Pull" },
+  "Drop down trainer": { muscleGroup: "Back", secondaryMuscleGroup: "Biceps", movementType: "Pull" },
+  "Rowing Backrest Trainer": { muscleGroup: "Back", secondaryMuscleGroup: "Biceps", movementType: "Pull" },
 
   // Shoulders (Push / Arms)
   "Overhead Press (Barbell)": { muscleGroup: "Shoulders", secondaryMuscleGroup: "Triceps", movementType: "Push" },
@@ -147,8 +149,6 @@ export const EXERCISE_METADATA: Record<string, ExerciseMeta> = {
   "Air Bike": { muscleGroup: "Cardio", movementType: "Cardio" },
   "Elliptical Trainer": { muscleGroup: "Cardio", movementType: "Cardio" },
   "Box Jump": { muscleGroup: "Cardio", secondaryMuscleGroup: "Quads", movementType: "Legs" },
-  "Drop down trainer": { muscleGroup: "Cardio", movementType: "Cardio" },
-  "Rowing Backrest Trainer": { muscleGroup: "Cardio", secondaryMuscleGroup: "Back", movementType: "Cardio" },
 };
 
 export function getExerciseMetadata(exerciseName: string): ExerciseMeta {
