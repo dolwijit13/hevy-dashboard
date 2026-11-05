@@ -18,6 +18,8 @@ import { RecentLogs } from './components/overview/RecentLogs';
 import { ExerciseExplorer } from './components/exercises/ExerciseExplorer';
 import { MuscleBalanceView } from './components/muscles/MuscleBalanceView';
 import { BodyRecompView } from './components/body/BodyRecompView';
+import { GamificationView } from './components/gamification/GamificationView';
+import { computeRankInfo } from './utils/gamification';
 import {
   AlertCircle,
   Loader2,
@@ -32,10 +34,11 @@ import {
   Activity,
   Scale,
   Lock,
+  Trophy,
 } from 'lucide-react';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'exercises' | 'muscles' | 'body'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'exercises' | 'muscles' | 'body' | 'gamification'>('overview');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
   const [customRange, setCustomRange] = useState<CustomDateRange>(() => {
     const now = new Date();
@@ -226,6 +229,10 @@ export const App: React.FC = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  const overviewRank = useMemo(() => {
+    return computeRankInfo(allSessions, allSets, Array.from(allPrs.values()));
+  }, [allSessions, allSets, allPrs]);
+
   const handlePinSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (pinInput.trim() === appPin) {
@@ -282,6 +289,7 @@ export const App: React.FC = () => {
     { id: 'exercises', label: 'Exercises', icon: Dumbbell },
     { id: 'muscles', label: 'Muscles', icon: Activity },
     { id: 'body', label: 'Body', icon: Scale },
+    { id: 'gamification', label: 'Ranks', icon: Trophy },
   ] as const;
 
   return (
@@ -336,6 +344,52 @@ export const App: React.FC = () => {
               <div className="space-y-6">
                 <KpiBento kpis={kpis} />
 
+                {/* Mini Rank & Promotion Banner */}
+                <div
+                  onClick={() => {
+                    setActiveTab('gamification');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  className="p-4 rounded-2xl bg-gradient-to-r from-zinc-900/90 via-[#131b18] to-zinc-900/90 border border-emerald-500/25 hover:border-emerald-500/40 transition-all cursor-pointer shadow-lg group flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-zinc-800/80 border border-emerald-500/30 flex items-center justify-center text-xl shrink-0">
+                      {overviewRank.badgeEmoji}
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white group-hover:text-emerald-300 transition-colors">
+                          Current Rank: {overviewRank.fullName}
+                        </span>
+                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                          {overviewRank.title}
+                        </span>
+                      </div>
+                      <p className="text-xs text-zinc-400 mt-0.5 font-mono">
+                        อีกประมาณ ~{overviewRank.estMonthsToNextRank} เดือน สู่ยศ {overviewRank.nextRankName}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3 self-end sm:self-center">
+                    <div className="w-32 hidden sm:block">
+                      <div className="h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                        <div
+                          className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 rounded-full"
+                          style={{ width: `${overviewRank.progressPercent}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] font-mono text-zinc-400 block text-right mt-1">
+                        {overviewRank.progressPercent}% to next rank
+                      </span>
+                    </div>
+
+                    <span className="text-xs text-emerald-400 font-medium group-hover:translate-x-1 transition-transform flex items-center gap-1 font-mono">
+                      Quests & Badges →
+                    </span>
+                  </div>
+                </div>
+
                 <Heatmap
                   sessions={allSessions}
                   onSelectExercise={handleSelectExerciseAndNavigate}
@@ -376,6 +430,16 @@ export const App: React.FC = () => {
 
             {/* Tab 4: Body & Recomposition */}
             {activeTab === 'body' && <BodyRecompView measurements={filteredMeasurements} />}
+
+            {/* Tab 5: Gamification & Quests */}
+            {activeTab === 'gamification' && (
+              <GamificationView
+                sessions={allSessions}
+                sets={allSets}
+                prs={allPrs}
+                measurements={allMeasurements}
+              />
+            )}
           </>
         )}
       </main>

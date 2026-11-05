@@ -16,8 +16,8 @@ interface HeaderProps {
   onSyncHevy: () => void;
   isSyncing: boolean;
   isLoading: boolean;
-  activeTab: 'overview' | 'exercises' | 'muscles' | 'body';
-  onTabChange: (tab: 'overview' | 'exercises' | 'muscles' | 'body') => void;
+  activeTab: 'overview' | 'exercises' | 'muscles' | 'body' | 'gamification';
+  onTabChange: (tab: 'overview' | 'exercises' | 'muscles' | 'body' | 'gamification') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -71,6 +71,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'exercises', label: '🏋️ Exercise & PR Explorer' },
     { id: 'muscles', label: '💪 Muscle Volume & Balance' },
     { id: 'body', label: '⚖️ Body & Recomposition' },
+    { id: 'gamification', label: '🎮 Ranks & Quests' },
   ] as const;
 
   const quickTimeOptions: { label: string; value: TimeFilter }[] = [
