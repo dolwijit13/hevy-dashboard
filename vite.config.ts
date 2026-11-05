@@ -6,7 +6,7 @@ import path from 'path';
 import { syncHevyWorkouts, getSyncStatus } from './src/server/hevySync.ts';
 
 function setupApiMiddlewares(server: any) {
-  server.middlewares.use((req: any, res: any, next: any) => {
+  server.middlewares.use(async (req: any, res: any, next: any) => {
     // 1. Raw CSV serving with no-cache headers
     if (req.url && req.url.startsWith('/raw/')) {
       const relativePath = req.url.replace('/raw/', '').split('?')[0];
@@ -22,7 +22,7 @@ function setupApiMiddlewares(server: any) {
     // 2. Hevy Sync status endpoint
     if (req.url && req.url.startsWith('/api/sync-hevy/status') && req.method === 'GET') {
       try {
-        const status = getSyncStatus();
+        const status = await getSyncStatus();
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify(status));
         return;

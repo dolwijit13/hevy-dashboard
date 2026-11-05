@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import Papa from 'papaparse';
-import { Client } from 'pg';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -16,6 +16,7 @@ export interface SyncResult {
   };
   message: string;
   error?: string;
+  details?: any;
 }
 
 export interface SyncStatus {
@@ -66,17 +67,21 @@ export function parseFlexibleDate(dateStr: string): Date {
 }
 
 export function saveApiKeyToEnvLocal(apiKey: string): void {
-  const envPath = path.resolve(process.cwd(), '.env.local');
-  let content = '';
-  if (fs.existsSync(envPath)) {
-    content = fs.readFileSync(envPath, 'utf8');
+  try {
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    let content = '';
+    if (fs.existsSync(envPath)) {
+      content = fs.readFileSync(envPath, 'utf8');
+    }
+    if (content.match(/^HEVY_API_KEY\s*=/m)) {
+      content = content.replace(/^HEVY_API_KEY\s*=.*$/m, `HEVY_API_KEY=${apiKey}`);
+    } else {
+      content = (content.trim() ? content.trim() + '\n' : '') + `HEVY_API_KEY=${apiKey}\n`;
+    }
+    fs.writeFileSync(envPath, content, 'utf8');
+  } catch (err) {
+    // Read-only filesystem on serverless environments
   }
-  if (content.match(/^HEVY_API_KEY\s*=/m)) {
-    content = content.replace(/^HEVY_API_KEY\s*=.*$/m, `HEVY_API_KEY=${apiKey}`);
-  } else {
-    content = (content.trim() ? content.trim() + '\n' : '') + `HEVY_API_KEY=${apiKey}\n`;
-  }
-  fs.writeFileSync(envPath, content, 'utf8');
 }
 
 export function getHevyApiKey(overrideKey?: string): string | null {
@@ -89,124 +94,81 @@ export function getHevyApiKey(overrideKey?: string): string | null {
   }
 
   // Try reading .env.local
-  const envPath = path.resolve(process.cwd(), '.env.local');
-  if (fs.existsSync(envPath)) {
-    const content = fs.readFileSync(envPath, 'utf8');
-    const match = content.match(/^HEVY_API_KEY\s*=\s*(.*)$/m);
-    if (match && match[1]) {
-      const k = match[1].trim().replace(/^["']|["']$/g, '');
-      if (k) return k;
-    }
-  }
-
-  // Try reading .env
-  const mainEnvPath = path.resolve(process.cwd(), '.env');
-  if (fs.existsSync(mainEnvPath)) {
-    const content = fs.readFileSync(mainEnvPath, 'utf8');
-    const match = content.match(/^HEVY_API_KEY\s*=\s*(.*)$/m);
-    if (match && match[1]) {
-      const k = match[1].trim().replace(/^["']|["']$/g, '');
-      if (k) return k;
-    }
-  }
-
-  return null;
-}
-
-export function getPostgresConnString(): string | null {
-  if (process.env.SUPABASE_POSTGRES_CONNECTION_STRING && process.env.SUPABASE_POSTGRES_CONNECTION_STRING.trim()) {
-    return process.env.SUPABASE_POSTGRES_CONNECTION_STRING.trim();
-  }
-  const envPath = path.resolve(process.cwd(), '.env.local');
-  if (fs.existsSync(envPath)) {
-    const content = fs.readFileSync(envPath, 'utf8');
-    const match = content.match(/^SUPABASE_POSTGRES_CONNECTION_STRING\s*=\s*(.*)$/m);
-    if (match && match[1]) {
-      const k = match[1].trim().replace(/^["']|["']$/g, '');
-      if (k) return k;
-    }
-  }
-  return null;
-}
-
-export async function upsertWorkoutsToSupabase(newWorkouts: any[]): Promise<void> {
-  const connStr = getPostgresConnString();
-  if (!connStr) return;
-
-  const client = new Client({ connectionString: connStr, ssl: { rejectUnauthorized: false } });
-  await client.connect();
-
   try {
-    for (const w of newWorkouts) {
-      const startTime = new Date(w.start_time);
-      const endTime = w.end_time ? new Date(w.end_time) : startTime;
-      const workoutId = `w_${startTime.getTime()}_${(w.title || 'Workout').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20)}`;
-
-      await client.query(
-        `
-        INSERT INTO workouts (id, title, start_time, end_time, description)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (id) DO UPDATE SET
-          title = EXCLUDED.title,
-          start_time = EXCLUDED.start_time,
-          end_time = EXCLUDED.end_time,
-          description = EXCLUDED.description;
-      `,
-        [workoutId, w.title || 'Workout', startTime.toISOString(), endTime.toISOString(), w.description || '']
-      );
-
-      let setIdx = 0;
-      for (const ex of (w.exercises || [])) {
-        for (const s of (ex.sets || [])) {
-          const setId = `set_${workoutId}_${setIdx++}`;
-          const distKm =
-            s.distance_meters !== null && s.distance_meters !== undefined
-              ? Number((s.distance_meters / 1000).toFixed(3))
-              : null;
-
-          await client.query(
-            `
-            INSERT INTO workout_sets (
-              id, workout_id, exercise_title, superset_id, exercise_notes,
-              set_index, set_type, weight_kg, reps, distance_km, duration_seconds, rpe, start_time
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            ON CONFLICT (id) DO UPDATE SET
-              exercise_title = EXCLUDED.exercise_title,
-              weight_kg = EXCLUDED.weight_kg,
-              reps = EXCLUDED.reps,
-              set_type = EXCLUDED.set_type;
-          `,
-            [
-              setId,
-              workoutId,
-              ex.title || '',
-              ex.superset_id ?? null,
-              ex.notes || '',
-              s.index ?? 0,
-              (s.type || 'normal').toLowerCase(),
-              s.weight_kg ?? null,
-              s.reps ?? null,
-              distKm,
-              s.duration_seconds ?? null,
-              s.rpe ?? null,
-              startTime.toISOString(),
-            ]
-          );
-        }
+    const envPath = path.resolve(process.cwd(), '.env.local');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/^HEVY_API_KEY\s*=\s*(.*)$/m);
+      if (match && match[1]) {
+        const k = match[1].trim().replace(/^["']|["']$/g, '');
+        if (k) return k;
       }
     }
-  } catch (err) {
-    console.error('Failed to upsert to Supabase in hevySync:', err);
-  } finally {
-    await client.end();
-  }
+  } catch (_) {}
+
+  // Try reading .env
+  try {
+    const mainEnvPath = path.resolve(process.cwd(), '.env');
+    if (fs.existsSync(mainEnvPath)) {
+      const content = fs.readFileSync(mainEnvPath, 'utf8');
+      const match = content.match(/^HEVY_API_KEY\s*=\s*(.*)$/m);
+      if (match && match[1]) {
+        const k = match[1].trim().replace(/^["']|["']$/g, '');
+        if (k) return k;
+      }
+    }
+  } catch (_) {}
+
+  return null;
 }
 
-export function getSyncStatus(csvDir = 'raw'): SyncStatus {
-  const apiKey = getHevyApiKey();
-  const csvPath = path.resolve(process.cwd(), csvDir, 'workout_data.csv');
+export function getSupabaseServerClient(): SupabaseClient | null {
+  const url =
+    process.env.SUPABASE_PROJECT_URL ||
+    process.env.VITE_SUPABASE_PROJECT_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    '';
+  const key =
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    '';
 
+  if (!url || !key) return null;
+  return createClient(url, key);
+}
+
+export async function getSyncStatus(csvDir = 'raw'): Promise<SyncStatus> {
+  const apiKey = getHevyApiKey();
+  const supabase = getSupabaseServerClient();
+
+  // 1. Try Supabase first
+  if (supabase) {
+    try {
+      const [wCountRes, sCountRes, latestRes] = await Promise.all([
+        supabase.from('workouts').select('*', { count: 'exact', head: true }),
+        supabase.from('workout_sets').select('*', { count: 'exact', head: true }),
+        supabase.from('workouts').select('start_time').order('start_time', { ascending: false }).limit(1),
+      ]);
+
+      const latestDateStr = latestRes.data?.[0]?.start_time
+        ? formatHevyDate(latestRes.data[0].start_time)
+        : null;
+
+      return {
+        configured: Boolean(apiKey),
+        hasKey: Boolean(apiKey),
+        latestDateInCsv: latestDateStr,
+        totalWorkoutsInCsv: wCountRes.count || 0,
+        totalSetsInCsv: sCountRes.count || 0,
+      };
+    } catch (err) {
+      console.warn('Failed to query Supabase status, falling back to CSV:', err);
+    }
+  }
+
+  // 2. Fallback to local CSV
+  const csvPath = path.resolve(process.cwd(), csvDir, 'workout_data.csv');
   if (!fs.existsSync(csvPath)) {
     return {
       configured: Boolean(apiKey),
@@ -263,44 +225,65 @@ export async function syncHevyWorkouts(options?: {
       updated: false,
       newWorkoutsCount: 0,
       newRowsCount: 0,
-      message: 'ไม่พบ HEVY_API_KEY กรุณาระบุในไฟล์ .env.local หรือส่งผ่านการตั้งค่า',
+      message: 'ไม่พบ HEVY_API_KEY กรุณาระบุใน Environment Variables ของ Vercel หรือ .env.local',
       error: 'NO_API_KEY',
     };
   }
 
-  const csvPath = path.resolve(process.cwd(), csvDir, 'workout_data.csv');
-  const backupPath = path.resolve(process.cwd(), csvDir, 'workout_data.backup.csv');
-
-  let existingContent = '';
+  const supabase = getSupabaseServerClient();
   let latestTimestamp = 0;
   const existingWorkoutKeys = new Set<string>();
 
-  if (fs.existsSync(csvPath)) {
-    existingContent = fs.readFileSync(csvPath, 'utf8');
-    const parsed = Papa.parse<{ start_time?: string; title?: string }>(existingContent, {
-      header: true,
-      skipEmptyLines: true,
-    });
+  // 1. Check Supabase first for latest workout timestamp & existing keys
+  if (supabase) {
+    try {
+      const { data: latestRows, error } = await supabase
+        .from('workouts')
+        .select('start_time, title')
+        .order('start_time', { ascending: false })
+        .limit(20);
 
-    for (const row of parsed.data) {
-      if (row.start_time) {
-        const d = parseFlexibleDate(row.start_time);
-        const t = d.getTime();
-        if (t > latestTimestamp) {
-          latestTimestamp = t;
+      if (!error && latestRows && latestRows.length > 0) {
+        latestTimestamp = new Date(latestRows[0].start_time).getTime();
+        for (const r of latestRows) {
+          existingWorkoutKeys.add(`${formatHevyDate(r.start_time)}|${(r.title || '').trim()}`);
         }
-        // Key to deduplicate workouts: normalized start time string + title
-        existingWorkoutKeys.add(`${formatHevyDate(d)}|${(row.title || '').trim()}`);
       }
+    } catch (e) {
+      console.warn('Could not query latest workout from Supabase:', e);
     }
   }
 
-  // Fetch from Hevy API paginated until reaching already-known workouts
+  // 2. Also check local CSV if present
+  const csvPath = path.resolve(process.cwd(), csvDir, 'workout_data.csv');
+  let existingContent = '';
+  if (fs.existsSync(csvPath)) {
+    try {
+      existingContent = fs.readFileSync(csvPath, 'utf8');
+      const parsed = Papa.parse<{ start_time?: string; title?: string }>(existingContent, {
+        header: true,
+        skipEmptyLines: true,
+      });
+
+      for (const row of parsed.data) {
+        if (row.start_time) {
+          const d = parseFlexibleDate(row.start_time);
+          const t = d.getTime();
+          if (t > latestTimestamp) {
+            latestTimestamp = t;
+          }
+          existingWorkoutKeys.add(`${formatHevyDate(d)}|${(row.title || '').trim()}`);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 3. Fetch from Hevy API paginated until reaching already-known workouts
   const newWorkouts: any[] = [];
   let page = 1;
   const pageSize = 10;
   let reachedExisting = false;
-  const maxPages = 40; // up to 400 workouts safety limit
+  const maxPages = 20;
 
   while (!reachedExisting && page <= maxPages) {
     let res: Response;
@@ -357,8 +340,8 @@ export async function syncHevyWorkouts(options?: {
       const wFormattedDate = formatHevyDate(wDate);
       const workoutKey = `${wFormattedDate}|${(w.title || '').trim()}`;
 
-      // Check if this workout is newer than our latest CSV record and not already in CSV
-      if (wTimestamp > latestTimestamp + 5000 && !existingWorkoutKeys.has(workoutKey)) {
+      // If workout is strictly newer than our latest record (tolerance 5s) and not in existing keys
+      if (latestTimestamp === 0 || (wTimestamp > latestTimestamp + 5000 && !existingWorkoutKeys.has(workoutKey))) {
         newWorkouts.push(w);
       } else {
         reachedExisting = true;
@@ -366,7 +349,7 @@ export async function syncHevyWorkouts(options?: {
       }
     }
 
-    if (reachedExisting || page >= data.page_count) {
+    if (reachedExisting || page >= (data.page_count || 1)) {
       break;
     }
     page++;
@@ -382,21 +365,53 @@ export async function syncHevyWorkouts(options?: {
     };
   }
 
-  // Convert new workouts to CSV rows matching workout_data.csv format
-  const generatedRows: any[] = [];
+  // 4. Map new workouts to DB and CSV structures
+  const supabaseWorkouts: any[] = [];
+  const supabaseSets: any[] = [];
+  const generatedCsvRows: any[] = [];
 
   for (const w of newWorkouts) {
     const startTimeStr = formatHevyDate(w.start_time);
     const endTimeStr = formatHevyDate(w.end_time || w.start_time);
+    const startTime = new Date(w.start_time);
+    const endTime = w.end_time ? new Date(w.end_time) : startTime;
+    const workoutId = `w_${startTime.getTime()}_${(w.title || 'Workout').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20)}`;
 
+    supabaseWorkouts.push({
+      id: workoutId,
+      title: w.title || 'Workout',
+      start_time: startTime.toISOString(),
+      end_time: endTime.toISOString(),
+      description: w.description || '',
+    });
+
+    let setGlobalIdx = 0;
     for (const ex of (w.exercises || [])) {
       for (const set of (ex.sets || [])) {
         const distKm =
           set.distance_meters !== null && set.distance_meters !== undefined
             ? Number((set.distance_meters / 1000).toFixed(3))
-            : '';
+            : null;
 
-        generatedRows.push({
+        const setId = `set_${workoutId}_${setGlobalIdx++}`;
+
+        supabaseSets.push({
+          id: setId,
+          workout_id: workoutId,
+          exercise_title: ex.title || '',
+          superset_id: ex.superset_id !== null && ex.superset_id !== undefined ? String(ex.superset_id) : null,
+          exercise_notes: ex.notes || '',
+          set_index: set.index ?? 0,
+          set_type: (set.type || 'normal').toLowerCase(),
+          weight_kg: set.weight_kg !== null && set.weight_kg !== undefined ? Number(set.weight_kg) : null,
+          reps: set.reps !== null && set.reps !== undefined ? Number(set.reps) : null,
+          distance_km: distKm,
+          duration_seconds: set.duration_seconds !== null && set.duration_seconds !== undefined ? Number(set.duration_seconds) : null,
+          rpe: set.rpe !== null && set.rpe !== undefined ? Number(set.rpe) : null,
+          start_time: startTime.toISOString(),
+        });
+
+        generatedCsvRows.push({
           title: w.title || '',
           start_time: startTimeStr,
           end_time: endTimeStr,
@@ -408,87 +423,101 @@ export async function syncHevyWorkouts(options?: {
           set_type: (set.type || 'normal').toLowerCase(),
           weight_kg: set.weight_kg !== null && set.weight_kg !== undefined ? set.weight_kg : '',
           reps: set.reps !== null && set.reps !== undefined ? set.reps : '',
-          distance_km: distKm,
-          duration_seconds: set.duration_seconds !== null && set.duration_seconds !== undefined ? set.duration_seconds : '',
-          rpe: set.rpe !== null && set.rpe !== undefined ? set.rpe : '',
+          distance_km: distKm ?? '',
+          duration_seconds: set.duration_seconds ?? '',
+          rpe: set.rpe ?? '',
         });
       }
     }
   }
 
-  // Generate CSV text
-  const newCsvLines = Papa.unparse(
-    {
-      fields: [
-        'title',
-        'start_time',
-        'end_time',
-        'description',
-        'exercise_title',
-        'superset_id',
-        'exercise_notes',
-        'set_index',
-        'set_type',
-        'weight_kg',
-        'reps',
-        'distance_km',
-        'duration_seconds',
-        'rpe',
-      ],
-      data: generatedRows,
-    },
-    {
-      header: false,
-      quotes: (_value, colIndex) => [0, 1, 2, 3, 4, 6, 8].includes(colIndex),
-      newline: '\r\n',
+  // 5. Upsert to Supabase
+  if (supabase) {
+    try {
+      if (supabaseWorkouts.length > 0) {
+        const { error: wErr } = await supabase.from('workouts').upsert(supabaseWorkouts);
+        if (wErr) console.error('Supabase workout upsert error:', wErr);
+      }
+      if (supabaseSets.length > 0) {
+        // Upsert in batches of 200
+        for (let i = 0; i < supabaseSets.length; i += 200) {
+          const chunk = supabaseSets.slice(i, i + 200);
+          const { error: sErr } = await supabase.from('workout_sets').upsert(chunk);
+          if (sErr) console.error('Supabase sets upsert error:', sErr);
+        }
+      }
+    } catch (dbErr) {
+      console.error('Failed to upsert to Supabase during sync:', dbErr);
     }
-  );
+  }
 
-  // Also upsert directly to Supabase if configured
+  // 6. Safe update of local CSV (in writable environments like Localhost)
   try {
-    await upsertWorkoutsToSupabase(newWorkouts);
-  } catch (dbErr) {
-    console.warn('Failed to upsert to Supabase during sync:', dbErr);
-  }
+    const backupPath = path.resolve(process.cwd(), csvDir, 'workout_data.backup.csv');
+    if (fs.existsSync(csvPath)) {
+      fs.copyFileSync(csvPath, backupPath);
+    }
 
-  // Backup existing file if present
-  if (fs.existsSync(csvPath)) {
-    fs.copyFileSync(csvPath, backupPath);
-  }
+    const newCsvLines = Papa.unparse(
+      {
+        fields: [
+          'title',
+          'start_time',
+          'end_time',
+          'description',
+          'exercise_title',
+          'superset_id',
+          'exercise_notes',
+          'set_index',
+          'set_type',
+          'weight_kg',
+          'reps',
+          'distance_km',
+          'duration_seconds',
+          'rpe',
+        ],
+        data: generatedCsvRows,
+      },
+      {
+        header: false,
+        quotes: (_value, colIndex) => [0, 1, 2, 3, 4, 6, 8].includes(colIndex),
+        newline: '\r\n',
+      }
+    );
 
-  // Prepend new rows right after the header line
-  let updatedCsv = '';
-  if (existingContent && existingContent.includes('\n')) {
-    const firstNewline = existingContent.indexOf('\n');
-    const headerLine = existingContent.slice(0, firstNewline + 1); // includes \r\n or \n
-    const remainingLines = existingContent.slice(firstNewline + 1);
-    updatedCsv = `${headerLine}${newCsvLines}\r\n${remainingLines}`;
-  } else {
-    // Brand new file
-    const header =
-      '"title","start_time","end_time","description","exercise_title","superset_id","exercise_notes","set_index","set_type","weight_kg","reps","distance_km","duration_seconds","rpe"\r\n';
-    updatedCsv = `${header}${newCsvLines}\r\n`;
-  }
+    let updatedCsv = '';
+    if (existingContent && existingContent.includes('\n')) {
+      const firstNewline = existingContent.indexOf('\n');
+      const headerLine = existingContent.slice(0, firstNewline + 1);
+      const remainingLines = existingContent.slice(firstNewline + 1);
+      updatedCsv = `${headerLine}${newCsvLines}\r\n${remainingLines}`;
+    } else {
+      const header =
+        '"title","start_time","end_time","description","exercise_title","superset_id","exercise_notes","set_index","set_type","weight_kg","reps","distance_km","duration_seconds","rpe"\r\n';
+      updatedCsv = `${header}${newCsvLines}\r\n`;
+    }
 
-  // Ensure directory exists
-  fs.mkdirSync(path.dirname(csvPath), { recursive: true });
-  fs.writeFileSync(csvPath, updatedCsv, 'utf8');
+    fs.mkdirSync(path.dirname(csvPath), { recursive: true });
+    fs.writeFileSync(csvPath, updatedCsv, 'utf8');
 
-  // Also update dist/raw/workout_data.csv if dist exists
-  const distCsvPath = path.resolve(process.cwd(), 'dist', csvDir, 'workout_data.csv');
-  if (fs.existsSync(path.dirname(distCsvPath))) {
-    fs.writeFileSync(distCsvPath, updatedCsv, 'utf8');
+    const distCsvPath = path.resolve(process.cwd(), 'dist', csvDir, 'workout_data.csv');
+    if (fs.existsSync(path.dirname(distCsvPath))) {
+      fs.writeFileSync(distCsvPath, updatedCsv, 'utf8');
+    }
+  } catch (fsErr) {
+    // Read-only filesystem on Vercel/AWS Lambda
+    console.log('Local CSV write skipped (serverless environment)');
   }
 
   return {
     success: true,
     updated: true,
     newWorkoutsCount: newWorkouts.length,
-    newRowsCount: generatedRows.length,
+    newRowsCount: generatedCsvRows.length,
     latestWorkout: {
       title: newWorkouts[0].title || 'Workout',
       startTime: formatHevyDate(newWorkouts[0].start_time),
     },
-    message: `ซิงค์สำเร็จ! เพิ่ม ${newWorkouts.length} workout ใหม่ (${generatedRows.length} เซ็ต)`,
+    message: `ซิงค์สำเร็จ! เพิ่ม ${newWorkouts.length} workout ใหม่ (${generatedCsvRows.length} เซ็ต)`,
   };
 }
