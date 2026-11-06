@@ -417,6 +417,8 @@ const DashboardContent: React.FC = () => {
 
                 <Heatmap
                   sessions={allSessions}
+                  yearFilter={timeFilter}
+                  customRange={customRange}
                   onSelectExercise={handleSelectExerciseAndNavigate}
                 />
 
