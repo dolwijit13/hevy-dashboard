@@ -35,7 +35,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const mode = req.query?.mode === 'routine' ? 'routine' : 'volume';
     const theme = req.query?.theme === 'amoled' ? 'amoled' : 'dark';
     const transparent = req.query?.transparent === 'true' || req.query?.transparent === '1';
-    const format = req.query?.format === 'json' ? 'json' : 'svg';
+    const format = req.query?.format === 'json' ? 'json' : req.query?.format === 'png' ? 'png' : 'svg';
+
+    if (format === 'png') {
+      const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+      const proto = req.headers['x-forwarded-proto'] || 'https';
+      const currentUrl = req.url || '/api/widget/heatmap';
+      const base = `${proto}://${host}`;
+      const urlObj = new URL(currentUrl, base);
+      urlObj.searchParams.delete('format');
+      const directSvgUrl = urlObj.toString();
+      const pngProxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(directSvgUrl)}&output=png`;
+      return res.redirect(307, pngProxyUrl);
+    }
 
     const widgetData = await getWidgetData(weeks);
 

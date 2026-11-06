@@ -85,6 +85,15 @@ function setupApiMiddlewares(server: any) {
           return;
         }
 
+        if (format === 'png') {
+          const directSvgUrl = `http://localhost:5173/api/widget/heatmap?weeks=${weeks}&mode=${mode}&theme=${theme}&transparent=${transparent}`;
+          const pngProxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(directSvgUrl)}&output=png`;
+          res.statusCode = 307;
+          res.setHeader('Location', pngProxyUrl);
+          res.end();
+          return;
+        }
+
         const svg = renderHeatmapSvg(data, { weeks, mode, theme, transparent });
         res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
         res.end(svg);
