@@ -1,3 +1,5 @@
+import { supabase } from '../lib/supabase';
+
 export interface SyncResult {
   success: boolean;
   updated: boolean;
@@ -27,7 +29,15 @@ export interface SyncStatus {
 }
 
 export async function fetchSyncStatus(): Promise<SyncStatus> {
-  const res = await fetch('/api/sync-hevy/status');
+  const headers: Record<string, string> = {};
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      headers['Authorization'] = `Bearer ${data.session.access_token}`;
+    }
+  }
+
+  const res = await fetch('/api/sync-hevy/status', { headers });
   if (!res.ok) {
     throw new Error(`Failed to fetch sync status: ${res.statusText}`);
   }
@@ -35,11 +45,20 @@ export async function fetchSyncStatus(): Promise<SyncStatus> {
 }
 
 export async function triggerHevySync(apiKey?: string): Promise<SyncResult> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) {
+      headers['Authorization'] = `Bearer ${data.session.access_token}`;
+    }
+  }
+
   const res = await fetch('/api/sync-hevy', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers,
     body: JSON.stringify(apiKey ? { apiKey } : {}),
   });
 

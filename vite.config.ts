@@ -85,12 +85,18 @@ export default defineConfig(({ mode }) => {
     env.SUPABASE_PUBLISHABLE_KEY ||
     '';
 
+  const allowedEmails =
+    env.VITE_ALLOWED_EMAILS ||
+    env.ALLOWED_EMAILS ||
+    '';
+
   return {
     define: {
       'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
       'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
       'import.meta.env.VITE_SUPABASE_PROJECT_URL': JSON.stringify(supabaseUrl),
       'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': JSON.stringify(supabaseAnonKey),
+      'import.meta.env.VITE_ALLOWED_EMAILS': JSON.stringify(allowedEmails),
     },
     plugins: [
       tailwindcss(),

@@ -20,6 +20,8 @@ import { MuscleBalanceView } from './components/muscles/MuscleBalanceView';
 import { BodyRecompView } from './components/body/BodyRecompView';
 import { GamificationView } from './components/gamification/GamificationView';
 import { computeRankInfo } from './utils/gamification';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { LoginScreen } from './components/auth/LoginScreen';
 import {
   AlertCircle,
   Loader2,
@@ -37,7 +39,8 @@ import {
   Trophy,
 } from 'lucide-react';
 
-export const App: React.FC = () => {
+const DashboardContent: React.FC = () => {
+  const { session, isAuthorized, isLoading: isAuthLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<'overview' | 'exercises' | 'muscles' | 'body' | 'gamification'>('overview');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
   const [customRange, setCustomRange] = useState<CustomDateRange>(() => {
@@ -101,10 +104,10 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isUnlocked) {
+    if (session && isAuthorized && isUnlocked) {
       loadDefaultData();
     }
-  }, [isUnlocked]);
+  }, [session, isAuthorized, isUnlocked]);
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -251,7 +254,22 @@ export const App: React.FC = () => {
     }
   };
 
-  // Lock screen view if PIN protection is active
+  // 1. Loading auth state
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center gap-3 text-zinc-400">
+        <Loader2 className="w-8 h-8 animate-spin text-emerald-400" />
+        <p className="text-xs font-mono text-zinc-400">กำลังตรวจสอบสิทธิ์การเข้าใช้งาน...</p>
+      </div>
+    );
+  }
+
+  // 2. Google OAuth Gate (Requires session & authorized email)
+  if (!session || !isAuthorized) {
+    return <LoginScreen />;
+  }
+
+  // 3. Optional Local Lock Screen (if VITE_APP_PIN is configured)
   if (!isUnlocked && appPin) {
     return (
       <div className="min-h-screen bg-[#09090b] text-white flex items-center justify-center p-4">
@@ -578,6 +596,14 @@ export const App: React.FC = () => {
         Hevy Fitness Analytics • Connected to {dataSource === 'supabase' ? 'Supabase Database' : 'Local CSV'} • {allSessions.length.toLocaleString()} sessions parsed
       </footer>
     </div>
+  );
+};
+
+export const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <DashboardContent />
+    </AuthProvider>
   );
 };
 

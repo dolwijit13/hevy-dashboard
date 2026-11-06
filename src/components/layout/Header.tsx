@@ -1,7 +1,8 @@
 import React, { useRef, useState } from 'react';
 import { TimeFilter, CustomDateRange } from '../../types/fitness';
 import { DateRangePicker } from './DateRangePicker';
-import { Flame, Dumbbell, Upload, RotateCcw, Filter, Calendar as CalendarIcon, X, Zap } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { Flame, Dumbbell, Upload, RotateCcw, Filter, Calendar as CalendarIcon, X, Zap, LogOut, User as UserIcon } from 'lucide-react';
 
 interface HeaderProps {
   timeFilter: TimeFilter;
@@ -39,6 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
   const workoutInputRef = useRef<HTMLInputElement>(null);
   const measurementInputRef = useRef<HTMLInputElement>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const { user, signOut } = useAuth();
 
   const handleWorkoutFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -242,6 +244,37 @@ export const Header: React.FC<HeaderProps> = ({
               <RotateCcw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
+
+          {/* User Profile & Sign Out */}
+          {user && (
+            <div className="flex items-center gap-2 pl-1 border-l border-white/10">
+              <div
+                title={user.email || 'ผู้ใช้งาน'}
+                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-zinc-900/80 border border-white/10 text-xs text-zinc-300 max-w-[170px]"
+              >
+                {user.user_metadata?.avatar_url ? (
+                  <img
+                    src={user.user_metadata.avatar_url}
+                    alt="avatar"
+                    className="w-4 h-4 rounded-full"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <UserIcon className="w-3.5 h-3.5 text-emerald-400" />
+                )}
+                <span className="truncate text-[11px] font-mono">{user.email}</span>
+              </div>
+
+              <button
+                onClick={() => signOut()}
+                title="ออกจากระบบ (Sign Out)"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs bg-zinc-900 text-zinc-400 hover:text-rose-300 hover:border-rose-500/40 hover:bg-rose-500/10 border border-white/10 transition-all"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Logout</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

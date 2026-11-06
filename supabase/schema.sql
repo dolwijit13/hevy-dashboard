@@ -58,30 +58,30 @@ CREATE TABLE IF NOT EXISTS body_measurements (
 
 CREATE INDEX IF NOT EXISTS idx_measurements_date ON body_measurements(date ASC);
 
--- 4. Enable Row Level Security (RLS) & Grant Public Read
+-- 4. Enable Row Level Security (RLS) & Restrict to Authenticated Users
 ALTER TABLE workouts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workout_sets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE body_measurements ENABLE ROW LEVEL SECURITY;
 
--- Allow anon and authenticated users to read data
+-- Allow authenticated users full access; anonymous requests are blocked
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'workouts' AND policyname = 'Allow public read access on workouts'
+    SELECT 1 FROM pg_policies WHERE tablename = 'workouts' AND policyname = 'Allow authenticated full access on workouts'
   ) THEN
-    CREATE POLICY "Allow public read access on workouts" ON workouts FOR SELECT USING (true);
+    CREATE POLICY "Allow authenticated full access on workouts" ON workouts FOR ALL TO authenticated USING (true) WITH CHECK (true);
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'workout_sets' AND policyname = 'Allow public read access on workout_sets'
+    SELECT 1 FROM pg_policies WHERE tablename = 'workout_sets' AND policyname = 'Allow authenticated full access on workout_sets'
   ) THEN
-    CREATE POLICY "Allow public read access on workout_sets" ON workout_sets FOR SELECT USING (true);
+    CREATE POLICY "Allow authenticated full access on workout_sets" ON workout_sets FOR ALL TO authenticated USING (true) WITH CHECK (true);
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'body_measurements' AND policyname = 'Allow public read access on body_measurements'
+    SELECT 1 FROM pg_policies WHERE tablename = 'body_measurements' AND policyname = 'Allow authenticated full access on body_measurements'
   ) THEN
-    CREATE POLICY "Allow public read access on body_measurements" ON body_measurements FOR SELECT USING (true);
+    CREATE POLICY "Allow authenticated full access on body_measurements" ON body_measurements FOR ALL TO authenticated USING (true) WITH CHECK (true);
   END IF;
 END
 $$;
