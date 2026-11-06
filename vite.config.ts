@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 import fs from 'fs';
 import path from 'path';
 import { syncHevyAll, getSyncStatus } from './src/server/hevySync.ts';
+import { getWidgetData, renderHeatmapSvg } from './src/server/widgetRenderer.ts';
 
 function setupApiMiddlewares(server: any) {
   server.middlewares.use(async (req: any, res: any, next: any) => {
@@ -63,6 +64,37 @@ function setupApiMiddlewares(server: any) {
         }
       });
       return;
+    }
+
+    // 4. Heatmap Widget endpoint for local dev
+    if (req.url && req.url.startsWith('/api/widget/heatmap') && req.method === 'GET') {
+      try {
+        const urlObj = new URL(req.url, 'http://localhost:5173');
+        const weeksParam = urlObj.searchParams.get('weeks');
+        const weeks = weeksParam ? parseInt(weeksParam, 10) || 18 : 18;
+        const mode = urlObj.searchParams.get('mode') === 'routine' ? 'routine' : 'volume';
+        const theme = urlObj.searchParams.get('theme') === 'amoled' ? 'amoled' : 'dark';
+        const transparent = urlObj.searchParams.get('transparent') === 'true';
+        const format = urlObj.searchParams.get('format') === 'json' ? 'json' : 'svg';
+
+        const data = await getWidgetData(weeks);
+
+        if (format === 'json') {
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify(data));
+          return;
+        }
+
+        const svg = renderHeatmapSvg(data, { weeks, mode, theme, transparent });
+        res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+        res.end(svg);
+        return;
+      } catch (err: any) {
+        res.statusCode = 500;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ error: err.message }));
+        return;
+      }
     }
 
     next();
